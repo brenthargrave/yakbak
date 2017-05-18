@@ -37,32 +37,83 @@ describe('yakbak', function () {
         yakbak = subject(server.host, { dirname: tmpdir.dirname });
       });
 
-      it('proxies the request to the server', function (done) {
-        request(yakbak)
-        .get('/record/1')
-        .set('host', 'localhost:3001')
-        .expect('X-Yakbak-Tape', '1a574e91da6cf00ac18bc97abaed139e')
-        .expect('Content-Type', 'text/html')
-        .expect(201, 'OK')
-        .end(function (err) {
-          assert.ifError(err);
-          assert.equal(server.requests.length, 1);
-          done();
-        });
-      });
+      describe('where tape matching the request', function () {
 
-      it('writes the tape to disk', function (done) {
-        request(yakbak)
-        .get('/record/2')
-        .set('host', 'localhost:3001')
-        .expect('X-Yakbak-Tape', '3234ee470c8605a1837e08f218494326')
-        .expect('Content-Type', 'text/html')
-        .expect(201, 'OK')
-        .end(function (err) {
-          assert.ifError(err);
-          assert(fs.existsSync(tmpdir.join('3234ee470c8605a1837e08f218494326.js')));
-          done();
+        describe('is absent', function () {
+
+          it('proxies the request to the server', function (done) {
+            request(yakbak)
+              .get('/record/1')
+              .set('host', 'localhost:3001')
+              .expect('X-Yakbak-Tape', '1a574e91da6cf00ac18bc97abaed139e')
+              .expect('Content-Type', 'text/html')
+              .expect(201, 'OK')
+              .end(function (err) {
+                assert.ifError(err);
+                assert.equal(server.requests.length, 1);
+                done();
+              });
+          });
+
+          it('writes the tape to disk', function (done) {
+            request(yakbak)
+              .get('/record/2')
+              .set('host', 'localhost:3001')
+              .expect('X-Yakbak-Tape', '3234ee470c8605a1837e08f218494326')
+              .expect('Content-Type', 'text/html')
+              .expect(201, 'OK')
+              .end(function (err) {
+                assert.ifError(err);
+                assert(fs.existsSync(tmpdir.join('3234ee470c8605a1837e08f218494326.js')));
+                done();
+              });
+          });
         });
+
+        describe('is present', function () {
+          var filePath;
+          var fileContent;
+
+          beforeEach(function () {
+            // write placeholder tape to simulate cache hit
+            filePath = tmpdir.join('3234ee470c8605a1837e08f218494326.js');
+            fs.writeFileSync(filePath, '', 'utf8');
+            fileContent = fs.readFileSync(filePath);
+          });
+
+          it('proxies the request to the server', function (done) {
+            request(yakbak)
+              .get('/record/1')
+              .set('host', 'localhost:3001')
+              .expect('X-Yakbak-Tape', '1a574e91da6cf00ac18bc97abaed139e')
+              .expect('Content-Type', 'text/html')
+              .expect(201, 'OK')
+              .end(function (err) {
+                assert.ifError(err);
+                assert.equal(server.requests.length, 1);
+                done();
+              });
+          });
+
+          it('updates the tape on disk', function (done) {
+            var updatedFileContent;
+
+            request(yakbak)
+              .get('/record/2')
+              .set('host', 'localhost:3001')
+              .expect('X-Yakbak-Tape', '3234ee470c8605a1837e08f218494326')
+              .expect('Content-Type', 'text/html')
+              .expect(201, 'OK')
+              .end(function (err) {
+                assert.ifError(err);
+                assert(fs.existsSync(filePath));
+                updatedFileContent = fs.readFileSync(filePath);
+                assert(updatedFileContent.length > fileContent.length);
+                done();
+              });
+          });
+        });
+
       });
 
       describe('when given a custom hashing function', function () {
@@ -102,75 +153,82 @@ describe('yakbak', function () {
 
     describe("when recording is not enabled", function () {
       beforeEach(function () {
-        yakbak = subject(server.host, { dirname: tmpdir.dirname, noRecord: true });
+        yakbak = subject(server.host, { dirname: tmpdir.dirname, record: false});
       });
 
-      it('returns a 404 error', function (done) {
-        request(yakbak)
-        .get('/record/2')
-        .set('host', 'localhost:3001')
-        .expect(404)
-        .end(done);
-      });
+      describe('where tape matching the request', function () {
 
-      it('does not make a request to the server', function (done) {
-        request(yakbak)
-        .get('/record/2')
-        .set('host', 'localhost:3001')
-        .end(function (err) {
-          assert.ifError(err);
-          assert.equal(server.requests.length, 0);
-          done();
+        describe('is absent', function () {
+
+          it('returns a 404 error', function (done) {
+            request(yakbak)
+              .get('/record/2')
+              .set('host', 'localhost:3001')
+              .expect(404)
+              .end(done);
+          });
+
+          it('does not make a request to the server', function (done) {
+            request(yakbak)
+              .get('/record/2')
+              .set('host', 'localhost:3001')
+              .end(function (err) {
+                assert.ifError(err);
+                assert.equal(server.requests.length, 0);
+                done();
+              });
+          });
+
+          it('does not write the tape to disk', function (done) {
+            request(yakbak)
+              .get('/record/2')
+              .set('host', 'localhost:3001')
+              .end(function (err) {
+                assert.ifError(err);
+                assert(!fs.existsSync(tmpdir.join('3234ee470c8605a1837e08f218494326.js')));
+                done();
+              });
+          });
+
         });
+
+        describe('is present', function () {
+
+          beforeEach(function (done) {
+            var file = '305c77b0a3ad7632e51c717408d8be0f.js';
+            var tape = [
+              'var path = require("path");',
+              'module.exports = function (req, res) {',
+              '  res.statusCode = 201;',
+              '  res.setHeader("content-type", "text/html")',
+              '  res.setHeader("x-yakbak-tape", path.basename(__filename, ".js"));',
+              '  res.end("YAY");',
+              '}',
+              ''
+            ].join('\n');
+
+            fs.writeFile(tmpdir.join(file), tape, done);
+          });
+
+          it('does not make a request to the server', function (done) {
+            request(yakbak)
+              .get('/playback/1')
+              .set('host', 'localhost:3001')
+              .expect('X-Yakbak-Tape', '305c77b0a3ad7632e51c717408d8be0f')
+              .expect('Content-Type', 'text/html')
+              .expect(201, 'YAY')
+              .end(function (err) {
+                assert.ifError(err);
+                assert.equal(server.requests.length, 0);
+                done();
+              });
+          });
+
+        });
+
       });
 
-      it('does not write the tape to disk', function (done) {
-        request(yakbak)
-        .get('/record/2')
-        .set('host', 'localhost:3001')
-        .end(function (err) {
-          assert.ifError(err);
-          assert(!fs.existsSync(tmpdir.join('3234ee470c8605a1837e08f218494326.js')));
-          done();
-        });
-      });
     });
   });
 
-  describe('playback', function () {
-    beforeEach(function () {
-      yakbak = subject(server.host, { dirname: tmpdir.dirname });
-    });
-
-    beforeEach(function (done) {
-      var file = '305c77b0a3ad7632e51c717408d8be0f.js';
-      var tape = [
-        'var path = require("path");',
-        'module.exports = function (req, res) {',
-        '  res.statusCode = 201;',
-        '  res.setHeader("content-type", "text/html")',
-        '  res.setHeader("x-yakbak-tape", path.basename(__filename, ".js"));',
-        '  res.end("YAY");',
-        '}',
-        ''
-      ].join('\n');
-
-      fs.writeFile(tmpdir.join(file), tape, done);
-    });
-
-    it('does not make a request to the server', function (done) {
-      request(yakbak)
-      .get('/playback/1')
-      .set('host', 'localhost:3001')
-      .expect('X-Yakbak-Tape', '305c77b0a3ad7632e51c717408d8be0f')
-      .expect('Content-Type', 'text/html')
-      .expect(201, 'YAY')
-      .end(function (err) {
-        assert.ifError(err);
-        assert.equal(server.requests.length, 0);
-        done();
-      });
-
-    });
-  });
 });

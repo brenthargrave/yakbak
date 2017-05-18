@@ -17,7 +17,7 @@ var debug = require('debug')('yakbak:server');
  * @param {String} host The hostname to proxy to
  * @param {Object} opts
  * @param {String} opts.dirname The tapes directory
- * @param {Boolean} opts.noRecord if true, requests will return a 404 error if the tape doesn't exist
+ * @param {Boolean} [opts.record=true] if true, requests are always proxied and their responses recorded. If false, requests will return a 404 error if tape matching a request doesn't exist.
  * @returns {Function}
  */
 
@@ -31,19 +31,28 @@ module.exports = function (host, opts) {
 
     return buffer(req).then(function (body) {
       var file = path.join(opts.dirname, tapename(req, body));
+      var recording = (opts.record || opts.record === null || opts.record === undefined);
+
+      var proxyAndRecord = function(req, body, host, file) {
+        return proxy(req, body, host).then(function (pres) {
+          return record(pres.req, pres, file);
+        });
+      }
 
       return Promise.try(function () {
         return require.resolve(file);
-      }).catch(ModuleNotFoundError, function (/* err */) {
-
-        if (opts.noRecord) {
-          throw new RecordingDisabledError('Recording Disabled');
+      }).then(function (file) {
+        if (recording) {
+          return proxyAndRecord(req, body, host, file);
         } else {
-          return proxy(req, body, host).then(function (pres) {
-            return record(pres.req, pres, file);
-          });
+          return file;
         }
-
+      }).catch(ModuleNotFoundError, function (/* err */) {
+        if (recording) {
+          return proxyAndRecord(req, body, host, file);
+        } else {
+          throw new RecordingDisabledError('Recording Disabled');
+        }
       });
     }).then(function (file) {
       return require(file);
@@ -87,7 +96,7 @@ function ModuleNotFoundError(err) {
 
 /**
  * Error class that is thrown when an unmatched request
- * is encountered in noRecord mode
+ * is encountered when not recording.
  * @constructor
  */
 
